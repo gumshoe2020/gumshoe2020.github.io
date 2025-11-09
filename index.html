@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Server Power Switch</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-900 text-slate-100">
+  <div class="max-w-xl mx-auto p-6">
+    <header class="mb-6">
+      <h1 class="text-2xl font-bold tracking-tight">DigitalOcean Server Switch</h1>
+      <p class="text-slate-400">Start/stop a specific droplet with your API key.</p>
+    </header>
+
+    <!-- Status Card -->
+    <div class="bg-slate-800/60 border border-slate-700 rounded-2xl p-5 shadow-xl">
+      <div class="flex items-center justify-between gap-3">
+        <div class="flex items-center gap-2">
+          <span id="statusDot" class="inline-block h-3 w-3 rounded-full bg-slate-500"></span>
+          <span id="statusText" class="text-sm text-slate-300">Unknown</span>
+        </div>
+        <button id="refreshBtn" class="px-3 py-1.5 text-sm rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-40">Refresh</button>
+      </div>
+
+      <div class="mt-6 grid grid-cols-2 gap-3">
+        <button id="toggleBtn" class="col-span-2 py-4 rounded-xl text-lg font-semibold bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40">
+          Turn On
+        </button>
+        <button id="shutdownBtn" class="py-3 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-40" title="Graceful OS shutdown">
+          Shutdown (Graceful)
+        </button>
+        <button id="rebootBtn" class="py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40">
+          Reboot
+        </button>
+        <button id="powerOffBtn" class="col-span-2 py-3 rounded-xl bg-rose-700 hover:bg-rose-600 disabled:opacity-40" title="Immediate hard power off">
+          Power Off (Hard)
+        </button>
+      </div>
+    </div>
+
+    <!-- Settings -->
+    <details class="mt-6 bg-slate-800/60 border border-slate-700 rounded-2xl">
+      <summary class="cursor-pointer list-none px-5 py-4 font-semibold">Settings</summary>
+      <div class="p-5 pt-0">
+        <label class="block text-sm text-slate-300 mb-1">API Base URL</label>
+        <input id="baseUrl" class="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 mb-4" placeholder="https://your-api.example.com" />
+
+        <label class="block text-sm text-slate-300 mb-1">Droplet ID</label>
+        <input id="dropletId" class="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 mb-4" placeholder="123456789" />
+
+        <label class="block text-sm text-slate-300 mb-1">X-API-Key</label>
+        <input id="apiKey" type="password" class="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 mb-4" placeholder="your-friend-key" />
+
+        <div class="flex items-center gap-3">
+          <button id="saveBtn" class="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600">Save</button>
+          <button id="clearBtn" class="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600">Clear</button>
+        </div>
+        <p class="text-xs text-slate-400 mt-3">Values are stored in your browser’s localStorage only.</p>
+      </div>
+    </details>
+
+    <!-- Toast -->
+    <div id="toast" class="fixed bottom-4 left-1/2 -translate-x-1/2 hidden px-4 py-2 rounded-xl bg-slate-800 border border-slate-700 text-sm"></div>
+  </div>
+
+  <script>
+    const els = {
+      statusDot: document.getElementById('statusDot'),
+      statusText: document.getElementById('statusText'),
+      refreshBtn: document.getElementById('refreshBtn'),
+      toggleBtn: document.getElementById('toggleBtn'),
+      shutdownBtn: document.getElementById('shutdownBtn'),
+      powerOffBtn: document.getElementById('powerOffBtn'),
+      rebootBtn: document.getElementById('rebootBtn'),
+      baseUrl: document.getElementById('baseUrl'),
+      dropletId: document.getElementById('dropletId'),
+      apiKey: document.getElementById('apiKey'),
+      saveBtn: document.getElementById('saveBtn'),
+      clearBtn: document.getElementById('clearBtn'),
+      toast: document.getElementById('toast'),
+    };
+
+    const LS_KEYS = { baseUrl: 'do.baseUrl', dropletId: 'do.dropletId', apiKey: 'do.apiKey' };
+
+    function loadSettings() {
+      els.baseUrl.value = localStorage.getItem(LS_KEYS.baseUrl) || '';
+      els.dropletId.value = localStorage.getItem(LS_KEYS.dropletId) || '';
+      els.apiKey.value   = localStorage.getItem(LS_KEYS.apiKey)   || '';
+    }
+    function saveSettings() {
+      localStorage.setItem(LS_KEYS.baseUrl, els.baseUrl.value.trim());
+      localStorage.setItem(LS_KEYS.dropletId, els.dropletId.value.trim());
+      localStorage.setItem(LS_KEYS.apiKey, els.apiKey.value.trim());
+      toast('Saved.');
+    }
+    function clearSettings() {
+      Object.values(LS_KEYS).forEach(k => localStorage.removeItem(k));
+      els.baseUrl.value = els.dropletId.value = els.apiKey.value = '';
+      toast('Cleared.');
+    }
+    function toast(msg, ok=true) {
+      els.toast.textContent = msg;
+      els.toast.classList.remove('hidden');
+      els.toast.classList.toggle('border-rose-600', !ok);
+      els.toast.classList.toggle('text-rose-300', !ok);
+      els.toast.classList.toggle('border-slate-700', ok);
+      els.toast.classList.toggle('text-slate-200', ok);
+      setTimeout(() => els.toast.classList.add('hidden'), 2200);
+    }
+    function cfg() {
+      return {
+        baseUrl: (els.baseUrl.value || '').replace(/\/+$/,''),
+        dropletId: els.dropletId.value.trim(),
+        apiKey: els.apiKey.value.trim(),
+      };
+    }
+    function requireCfg() {
+      const c = cfg();
+      if (!c.baseUrl || !c.dropletId || !c.apiKey) throw new Error('Please fill API Base URL, Droplet ID, and API Key in Settings.');
+      return c;
+    }
+    function setBusy(b) {
+      [els.refreshBtn, els.toggleBtn, els.shutdownBtn, els.powerOffBtn, els.rebootBtn].forEach(btn => btn.disabled = b);
+    }
+    function setStatus(state) {
+      // DO statuses: "active" (on), "off" (stopped), also "archive"
+      const on = state === 'active';
+      els.statusText.textContent = state || 'Unknown';
+      els.statusDot.className = 'inline-block h-3 w-3 rounded-full ' + (on ? 'bg-emerald-500' : (state ? 'bg-rose-500' : 'bg-slate-500'));
+      els.toggleBtn.textContent = on ? 'Turn Off (Graceful)' : 'Turn On';
+      els.toggleBtn.dataset.next = on ? 'shutdown' : 'power_on';
+      els.toggleBtn.classList.toggle('bg-emerald-600', !on);
+      els.toggleBtn.classList.toggle('hover:bg-emerald-500', !on);
+      els.toggleBtn.classList.toggle('bg-amber-600', on);
+      els.toggleBtn.classList.toggle('hover:bg-amber-500', on);
+    }
+    async function api(path, method='GET') {
+      const { baseUrl, apiKey } = requireCfg();
+      const url = `${baseUrl}${path}`;
+      const res = await fetch(url, {
+        method,
+        headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
+      });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      return res.json();
+    }
+    async function fetchStatus() {
+      try {
+        setBusy(true);
+        const { dropletId } = requireCfg();
+        const data = await api(`/status/${encodeURIComponent(dropletId)}`, 'GET');
+        setStatus(data?.droplet?.status);
+      } catch (e) {
+        setStatus('');
+        toast(e.message || 'Failed to fetch status', false);
+      } finally {
+        setBusy(false);
+      }
+    }
+    async function doAction(kind) {
+      try {
+        setBusy(true);
+        const { dropletId } = requireCfg();
+        const bodyPath = kind === 'power_on' ? '/power/on/' :
+                         kind === 'power_off' ? '/power/off/' :
+                         kind === 'shutdown' ? '/shutdown/' :
+                         kind === 'reboot' ? '/reboot/' : null;
+        if (!bodyPath) throw new Error('Unknown action');
+        const confirmHardOff = (kind === 'power_off') && !confirm('Hard power off now? This is like pulling the plug.');
+        if (confirmHardOff) return;
+        await api(`${bodyPath}${encodeURIComponent(dropletId)}`, 'POST');
+        // small wait then refresh
+        setTimeout(fetchStatus, 1200);
+        toast('Action sent.');
+      } catch (e) {
+        toast(e.message || 'Action failed', false);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    // Events
+    els.refreshBtn.addEventListener('click', fetchStatus);
+    els.toggleBtn.addEventListener('click', () => doAction(els.toggleBtn.dataset.next));
+    els.shutdownBtn.addEventListener('click', () => doAction('shutdown'));
+    els.powerOffBtn.addEventListener('click', () => doAction('power_off'));
+    els.rebootBtn.addEventListener('click', () => doAction('reboot'));
+    els.saveBtn.addEventListener('click', saveSettings);
+    els.clearBtn.addEventListener('click', clearSettings);
+
+    // Init
+    loadSettings();
+    if (els.baseUrl.value && els.dropletId.value && els.apiKey.value) {
+      fetchStatus();
+      // Optional periodic refresh:
+      setInterval(fetchStatus, 15000);
+    }
+  </script>
+</body>
+</html>
+
